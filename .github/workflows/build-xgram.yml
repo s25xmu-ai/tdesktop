@@ -1,0 +1,209 @@
+name: Build XGram (Windows x64 Release)
+
+# این یک فایل تنهاست: کافیه بذاریش توی هر ریپوی گیت‌هابی (حتی یه ریپوی خالی)
+# مسیر: .github/workflows/build-xgram.yml
+# و از تب Actions بزنی Run workflow. نیازی به فورک/پچ دستی tdesktop نیست؛
+# خودش هر بار سورس رسمی رو می‌کشه، پچ می‌کنه، بیلد می‌کنه.
+#
+# Secrets اختیاری (Settings > Secrets and variables > Actions):
+#   TDESKTOP_API_ID, TDESKTOP_API_HASH  (از my.telegram.org/apps — رایگان)
+#   نبودشون اشکالی نداره، با API تستی بیلد می‌شه.
+
+on:
+  workflow_dispatch: {}
+
+env:
+  TDESKTOP_REF: 9caf32dffc90ddd9bb08ad5777b865f729fa167b
+  SERVER_IP: 193.151.158.60
+  SERVER_PORT: 443
+  SERVER_DC: 2
+  APP_NAME: XGram
+  # Public key سرور گرم‌سرو (فقط public — هرگز private key اینجا نره)
+  SERVER_PUBLIC_KEY: |
+    -----BEGIN RSA PUBLIC KEY-----
+    MIIBCgKCAQEAxF//0M0+/5PzgdNagTX+J+dJgr75ZCTuiG8i4x7YwmJF+jiOGCjm
+    7X7BLCaMc1+hOZYDL3+Gvle/AKykW1qouaCJMVx/H+2l8LFXLelZ2PLawTb8A7Bl
+    TqWzL3db5BugMNWziL9TuhR8In1bwKY07QVpR9in5zjAsAGLBk+mGt0DnVyMf1Xo
+    p2lLCFNmm0F4ykcAeaLCCIPbGWddliLY8xEEhI4GO2l1U3kZMwIOdOnAGJFtgUAo
+    Te+FHR6F1s9adCVZB1teL/hf9R+WmekJwygVz0MYEH7y6U49T45+/W7OF6X6g0W0
+    j1uSSrsY4qN7twxbTad9zdGZ7ys+9v+PuQIDAQAB
+    -----END RSA PUBLIC KEY-----
+
+jobs:
+  windows:
+    name: Windows x64 Release
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd
+    env:
+      PREPARE_PATH: "Telegram/build/prepare/prepare.py"
+
+    steps:
+      - name: Prepare short build path (avoids Windows MAX_PATH issues)
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+          echo TDESKTOP_DIR=%GITHUB_WORKSPACE%\TBuild\tdesktop>>%GITHUB_ENV%
+
+      - name: Clone upstream tdesktop (pinned commit, with submodules)
+        uses: actions/checkout@v7
+        with:
+          repository: telegramdesktop/tdesktop
+          ref: ${{ env.TDESKTOP_REF }}
+          submodules: recursive
+          path: ${{ env.TBUILD }}\tdesktop
+
+      - name: Apply gramsrv + XGram patches
+        shell: pwsh
+        env:
+          PUB_KEY: ${{ env.SERVER_PUBLIC_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root   = "${{ env.TDESKTOP_DIR }}"
+          $dcFile = Join-Path $root "Telegram\SourceFiles\mtproto\mtproto_dc_options.cpp"
+          $verFile = Join-Path $root "Telegram\SourceFiles\core\version.h"
+
+          function Patch-Block($path, $pattern, $replacement, $label) {
+            $text = Get-Content -Raw -LiteralPath $path
+            $regex = [System.Text.RegularExpressions.Regex]::new($pattern, 'Singleline')
+            $count = $regex.Matches($text).Count
+            if ($count -ne 1) {
+              Write-Error "PATCH FAILED for '$label': expected exactly 1 match, found $count. Upstream file structure likely changed at this commit -- update the patch, do not ignore this."
+              exit 1
+            }
+            $new = $regex.Replace($text, { param($m) $replacement })
+            Set-Content -LiteralPath $path -Value $new -NoNewline
+            Write-Host "Patched: $label"
+          }
+
+          # ---- تبدیل public key به فرمت رشته‌ی C که tdesktop انتظار داره ----
+          $pemLines = ($env:PUB_KEY -split "`n") | Where-Object { $_.Trim() -ne "" }
+          $cLines = $pemLines | ForEach-Object { $_.Trim() + [char]92 + "n" + [char]92 }
+          $cLines[-1] = $pemLines[-1].Trim()
+          $cKeyBody = ($cLines -join "`n")
+          $rsaKeyLiteral = "{ `"" + [char]92 + "`n" + $cKeyBody + "`" }"
+
+          # ---- mtproto_dc_options.cpp ----
+          Patch-Block $dcFile 'const BuiltInDc kBuiltInDcs\[\] = \{.*?\};' `
+            "const BuiltInDc kBuiltInDcs[] = {`n`t{ ${{ env.SERVER_DC }}, `"${{ env.SERVER_IP }}`", ${{ env.SERVER_PORT }} },`n};" `
+            "kBuiltInDcs"
+
+          Patch-Block $dcFile 'const BuiltInDc kBuiltInDcsIPv6\[\] = \{.*?\};' `
+            "const BuiltInDc kBuiltInDcsIPv6[] = {};" `
+            "kBuiltInDcsIPv6"
+
+          Patch-Block $dcFile 'const BuiltInDc kBuiltInDcsTest\[\] = \{.*?\};' `
+            "const BuiltInDc kBuiltInDcsTest[] = {`n`t{ ${{ env.SERVER_DC }}, `"${{ env.SERVER_IP }}`", ${{ env.SERVER_PORT }} },`n};" `
+            "kBuiltInDcsTest"
+
+          Patch-Block $dcFile 'const BuiltInDc kBuiltInDcsIPv6Test\[\] = \{.*?\};' `
+            "const BuiltInDc kBuiltInDcsIPv6Test[] = {};" `
+            "kBuiltInDcsIPv6Test"
+
+          Patch-Block $dcFile 'const char \*kTestPublicRSAKeys\[\] = \{.*?\};' `
+            "const char *kTestPublicRSAKeys[] = $rsaKeyLiteral;" `
+            "kTestPublicRSAKeys"
+
+          Patch-Block $dcFile 'const char \*kPublicRSAKeys\[\] = \{.*?\};' `
+            "const char *kPublicRSAKeys[] = $rsaKeyLiteral;" `
+            "kPublicRSAKeys"
+
+          Patch-Block $dcFile 'Flag::f_static \| 0;' `
+            "Flag::f_static | Flag::f_tcpo_only;" `
+            "tcpo_only flag"
+
+          # ---- core/version.h : رنیم به XGram ----
+          Patch-Block $verFile 'constexpr auto AppId = ".*?"_cs;' `
+            'constexpr auto AppId = "{7FCCF625-2089-4AE0-9C4E-965F59E0D497}"_cs;' `
+            "AppId"
+
+          Patch-Block $verFile 'constexpr auto AppNameOld = ".*?"_cs;' `
+            "constexpr auto AppNameOld = `"${{ env.APP_NAME }} Win (Unofficial)`"_cs;" `
+            "AppNameOld"
+
+          Patch-Block $verFile 'constexpr auto AppName = ".*?"_cs;' `
+            "constexpr auto AppName = `"${{ env.APP_NAME }} Desktop`"_cs;" `
+            "AppName"
+
+          Patch-Block $verFile 'constexpr auto AppFile = ".*?"_cs;' `
+            "constexpr auto AppFile = `"${{ env.APP_NAME }}`"_cs;" `
+            "AppFile"
+
+      - name: Read required Windows SDK version + compute cache key
+        shell: bash
+        run: |
+          DOCPATH="$TDESKTOP_DIR/docs/building-win.md"
+          SDK="$(grep "SDK version" "$DOCPATH" | sed -r 's/.*\*\*(.*)\*\* SDK version.*/\1/')"
+          echo "SDK=$SDK" >> $GITHUB_ENV
+          echo "$(sha256sum "$TDESKTOP_DIR/$PREPARE_PATH" | awk '{ print $1 }')" >> CACHE_KEY.txt
+          echo "$SDK" >> CACHE_KEY.txt
+          echo "$TDESKTOP_REF" >> CACHE_KEY.txt
+          echo "CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }')" >> $GITHUB_ENV
+
+      - name: Native Tools Command Prompt (MSVC env)
+        uses: Eden-CI/msvc-dev-cmd@master
+        with:
+          arch: x64
+          sdk: ${{ env.SDK }}
+          toolset: 14.44
+
+      - name: NuGet sources
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
+          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+
+      - name: Cache third-party sources
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ${{ runner.os }}-third-party-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.os }}-third-party-
+
+      - name: Cache prebuilt libraries (Qt, OpenSSL, ffmpeg, ...)
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.LibrariesPath }}\*
+          key: ${{ runner.os }}-x64-libs-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.os }}-x64-libs-
+
+      - name: Fetch/prepare third-party libraries
+        run: call %TDESKTOP_DIR%\Telegram\build\prepare\win.bat skip-release silent
+
+      - name: Decide API credentials
+        shell: bash
+        env:
+          API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+        run: |
+          if [ -n "$API_ID" ] && [ -n "$API_HASH" ]; then
+            echo "TDESKTOP_API_FLAGS=-D TDESKTOP_API_ID=$API_ID -D TDESKTOP_API_HASH=$API_HASH" >> $GITHUB_ENV
+          else
+            echo "TDESKTOP_API_FLAGS=-D TDESKTOP_API_TEST=ON" >> $GITHUB_ENV
+            echo "::warning::TDESKTOP_API_ID/TDESKTOP_API_HASH secrets not set -- building with test API credentials. Fine for a quick test, get real ones from my.telegram.org for actual use."
+          fi
+
+      - name: Configure and build (Release, x64)
+        run: |
+          cd %TDESKTOP_DIR%\Telegram
+          call configure.bat x64 ^
+            %TDESKTOP_API_FLAGS% ^
+            -D CMAKE_CONFIGURATION_TYPES=Release ^
+            -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON ^
+            -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON
+          cmake --build ..\out --config Release --parallel
+
+      - name: Collect artifact
+        run: |
+          set OUT=%TDESKTOP_DIR%\out\Release
+          mkdir artifact
+          copy %OUT%\Telegram.exe artifact\%APP_NAME%.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.APP_NAME }}-win64-Release
+          path: artifact\
+          retention-days: 7
