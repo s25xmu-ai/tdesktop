@@ -192,7 +192,9 @@ jobs:
             %TDESKTOP_API_FLAGS% ^
             -D CMAKE_CONFIGURATION_TYPES=Release ^
             -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON ^
-            -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON
+            -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON ^
+            -D CMAKE_POLICY_DEFAULT_CMP0218=OLD ^
+            -Wno-dev
           cmake --build ..\out --config Release --parallel
 
       - name: Collect artifact
@@ -207,3 +209,4 @@ jobs:
           name: ${{ env.APP_NAME }}-win64-Release
           path: artifact\
           retention-days: 7
+          
