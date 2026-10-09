@@ -99,8 +99,22 @@ jobs:
 
       - name: Prepare third-party libraries
         run: |
-          call "%TBUILD%\tdesktop\Telegram\build\prepare\win.bat" skip-release silent
-          if errorlevel 1 exit /b %errorlevel%
+          if not exist logs mkdir logs
+          rem Remove a potentially partial MSYS2 install restored from cache.
+          if exist "%TBUILD%\ThirdParty\msys64" rmdir /S /Q "%TBUILD%\ThirdParty\msys64"
+          if exist "%TBUILD%\ThirdParty\msys64.exe" del /F /Q "%TBUILD%\ThirdParty\msys64.exe"
+          call "%TBUILD%\tdesktop\Telegram\build\prepare\win.bat" skip-release silent > logs\prepare.log 2>&1
+          if errorlevel 1 (
+            echo First preparation attempt failed. Cleaning MSYS2 and retrying once...>>logs\prepare.log
+            if exist "%TBUILD%\ThirdParty\msys64" rmdir /S /Q "%TBUILD%\ThirdParty\msys64"
+            if exist "%TBUILD%\ThirdParty\msys64.exe" del /F /Q "%TBUILD%\ThirdParty\msys64.exe"
+            call "%TBUILD%\tdesktop\Telegram\build\prepare\win.bat" skip-release silent >> logs\prepare.log 2>&1
+            if errorlevel 1 (
+              type logs\prepare.log
+              exit /b 1
+            )
+          )
+          type logs\prepare.log
 
       - name: Select Telegram API credentials
         shell: bash
@@ -117,11 +131,20 @@ jobs:
 
       - name: Configure and build Release x64
         run: |
+          if not exist "%GITHUB_WORKSPACE%\logs" mkdir "%GITHUB_WORKSPACE%\logs"
           cd /D "%TBUILD%\tdesktop\Telegram"
-          call configure.bat x64 %TDESKTOP_API_FLAGS% -D CMAKE_CONFIGURATION_TYPES=Release -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON -Wno-dev
-          if errorlevel 1 exit /b %errorlevel%
-          cmake --build ..\out --config Release --parallel
-          if errorlevel 1 exit /b %errorlevel%
+          call configure.bat x64 %TDESKTOP_API_FLAGS% -D CMAKE_CONFIGURATION_TYPES=Release -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON -Wno-dev > "%GITHUB_WORKSPACE%\logs\configure.log" 2>&1
+          if errorlevel 1 (
+            type "%GITHUB_WORKSPACE%\logs\configure.log"
+            exit /b 1
+          )
+          type "%GITHUB_WORKSPACE%\logs\configure.log"
+          cmake --build ..\out --config Release --parallel > "%GITHUB_WORKSPACE%\logs\build.log" 2>&1
+          if errorlevel 1 (
+            type "%GITHUB_WORKSPACE%\logs\build.log"
+            exit /b 1
+          )
+          type "%GITHUB_WORKSPACE%\logs\build.log"
 
       - name: Collect XGram executable
         run: |
@@ -132,6 +155,31 @@ jobs:
           if not exist artifact mkdir artifact
           copy /Y "%TBUILD%\tdesktop\out\Release\Telegram.exe" "artifact\XGram.exe"
           if errorlevel 1 exit /b %errorlevel%
+
+      - name: Zip build logs
+        if: always()
+        shell: pwsh
+        run: |
+          $logDir = Join-Path $env:GITHUB_WORKSPACE "logs"
+          if (!(Test-Path $logDir)) {
+            New-Item -ItemType Directory -Path $logDir | Out-Null
+          }
+          $logFiles = Get-ChildItem -Path $logDir -File -ErrorAction SilentlyContinue
+          if ($logFiles) {
+            Compress-Archive -Path (Join-Path $logDir "*") -DestinationPath (Join-Path $env:GITHUB_WORKSPACE "XGram-build-logs.zip") -Force
+          } else {
+            "No step logs were produced. Open the failed step in GitHub Actions for its output." | Set-Content (Join-Path $logDir "README.txt")
+            Compress-Archive -Path (Join-Path $logDir "*") -DestinationPath (Join-Path $env:GITHUB_WORKSPACE "XGram-build-logs.zip") -Force
+          }
+
+      - name: Upload build logs (including on failure)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: XGram-build-logs
+          path: XGram-build-logs.zip
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload Windows x64 artifact
         uses: actions/upload-artifact@v7
