@@ -43,6 +43,24 @@ jobs:
           path: TBuild/tdesktop
           fetch-depth: 0
 
+      - name: Fix MSYS2 diffutils package name
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $prepare = Join-Path $env:GITHUB_WORKSPACE "TBuild\tdesktop\Telegram\build\prepare\prepare.py"
+          if (!(Test-Path -LiteralPath $prepare)) {
+            throw "prepare.py not found at $prepare"
+          }
+          $source = Get-Content -Raw -LiteralPath $prepare
+          $old = "mingw-w64-x86_64-diffutils"
+          $count = ([regex]::Matches($source, [regex]::Escape($old))).Count
+          if ($count -ne 1) {
+            throw "Expected exactly one '$old' occurrence in prepare.py, found $count. Refusing to patch silently."
+          }
+          $source = $source.Replace($old, "diffutils")
+          Set-Content -LiteralPath $prepare -Value $source -NoNewline
+          Write-Host "Patched prepare.py to install the MSYS2 diffutils package."
+
       - name: Read Windows SDK and prepare cache key
         shell: bash
         run: |
