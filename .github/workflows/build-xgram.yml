@@ -121,12 +121,12 @@ jobs:
           rem Remove a potentially partial MSYS2 install restored from cache.
           if exist "%TBUILD%\ThirdParty\msys64" rmdir /S /Q "%TBUILD%\ThirdParty\msys64"
           if exist "%TBUILD%\ThirdParty\msys64.exe" del /F /Q "%TBUILD%\ThirdParty\msys64.exe"
-          call "%TBUILD%\tdesktop\Telegram\build\prepare\win.bat" skip-release silent > logs\prepare.log 2>&1
+          call "%TBUILD%\tdesktop\Telegram\build\prepare\win.bat" silent > logs\prepare.log 2>&1
           if errorlevel 1 (
             echo First preparation attempt failed. Cleaning MSYS2 and retrying once...>>logs\prepare.log
             if exist "%TBUILD%\ThirdParty\msys64" rmdir /S /Q "%TBUILD%\ThirdParty\msys64"
             if exist "%TBUILD%\ThirdParty\msys64.exe" del /F /Q "%TBUILD%\ThirdParty\msys64.exe"
-            call "%TBUILD%\tdesktop\Telegram\build\prepare\win.bat" skip-release silent >> logs\prepare.log 2>&1
+            call "%TBUILD%\tdesktop\Telegram\build\prepare\win.bat" silent >> logs\prepare.log 2>&1
             if errorlevel 1 (
               type logs\prepare.log
               exit /b 1
