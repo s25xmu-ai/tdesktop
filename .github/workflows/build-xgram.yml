@@ -115,6 +115,28 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-x64-libs-
 
+      - name: Ensure Visual Studio ATL/MFC headers are installed
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (!(Test-Path $vswhere)) {
+            throw "vswhere.exe not found; cannot locate Visual Studio Installer."
+          }
+          $vsPath = & $vswhere -latest -products * -property installationPath
+          if (!$vsPath) {
+            throw "No Visual Studio installation found."
+          }
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          if (!(Test-Path $installer)) {
+            throw "Visual Studio setup.exe not found at $installer"
+          }
+          & $installer modify --installPath "$vsPath" --add Microsoft.VisualStudio.Component.VC.ATL --add Microsoft.VisualStudio.Component.VC.ATLMFC --quiet --wait --norestart
+          if ($LASTEXITCODE -ne 0) {
+            throw "Visual Studio ATL/MFC component installation failed with exit code $LASTEXITCODE"
+          }
+          Write-Host "ATL/MFC components installed for $vsPath"
+
       - name: Prepare third-party libraries
         run: |
           if not exist logs mkdir logs
